@@ -1,0 +1,47 @@
+provider "aws" {
+  region = "us-west-2"
+}
+
+# Define your EKS cluster
+resource "aws_eks_cluster" "example" {
+  name     = "example-cluster"
+  role_arn = "arn:aws:iam::123456789012:role/eks-cluster-role"
+
+  vpc_config {
+    subnet_ids = ["subnet-xxxxxx", "subnet-yyyyyy"]
+  }
+}
+
+# Define a map of users or roles and their associated access types
+locals {
+  eks_users = {
+    "eks-user-1" = {
+      subject      = "arn:aws:iam::123456789012:user/eks-user-1"
+      access_types = ["READ_ONLY"]
+    },
+    "eks-user-2" = {
+      subject      = "arn:aws:iam::123456789012:user/eks-user-2"
+      access_types = ["FULL_ACCESS"]
+    },
+    "eks-user-3" = {
+      subject      = "arn:aws:iam::123456789012:user/eks-user-3"
+      access_types = ["READ_ONLY", "FULL_ACCESS"]
+    }
+  }
+}
+
+# Create an EKS access entry for each user/role using for_each
+resource "aws_eks_access_entry" "example_access_entry" {
+  for_each    = local.eks_users
+  cluster_name = aws_eks_cluster.example.name
+  subject      = each.value.subject  # IAM user or role ARN from the map
+  access_types = each.value.access_types  # Access types from the map
+}
+
+# Associate the access entry with a specific access policy for each user/role
+resource "aws_eks_access_policy_association" "example_association" {
+  for_each        = local.eks_users
+  cluster_name    = aws_eks_cluster.example.name
+  access_policy_arn = "arn:aws:iam::123456789012:policy/eks-access-policy"
+  subject         = each.value.subject  # IAM user or role ARN
+}
