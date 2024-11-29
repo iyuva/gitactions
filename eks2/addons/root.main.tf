@@ -29,3 +29,18 @@ module "eks" {
     }
   }
 }
+
+
+
+#######################################
+module "eks_addons" {
+  source = "./modules/eks_addons"
+
+  cluster_version                  = var.cluster_version
+  cluster_addons                    = var.cluster_addons
+  bootstrap_self_managed_addons     = var.bootstrap_self_managed_addons
+  create                            = var.create
+  create_outposts_local_cluster     = var.create_outposts_local_cluster
+  cluster_addons_timeouts           = var.cluster_addons_timeouts
+  tags                              = var.tags
+}
