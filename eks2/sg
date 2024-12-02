@@ -1,0 +1,68 @@
+# Variable to define security groups
+variable "eks_security_groups" {
+  description = "Map of security groups and their respective rules"
+  type        = map(object({
+    description = string
+    ingress = list(object({
+      description      = string
+      from_port        = number
+      to_port          = number
+      protocol         = string
+      cidr_blocks      = list(string)
+      security_groups  = optional(list(string), [])
+      self             = optional(bool, false)
+    }))
+    egress = list(object({
+      description      = string
+      from_port        = number
+      to_port          = number
+      protocol         = string
+      cidr_blocks      = list(string)
+      security_groups  = optional(list(string), [])
+      self             = optional(bool, false)
+    }))
+  }))
+  default = {}
+}
+
+# Create security groups
+resource "aws_security_group" "eks" {
+  for_each = var.eks_security_groups
+
+  name        = "eks-${each.key}-sg"
+  description = each.value.description
+  vpc_id      = var.vpc_id
+
+  # Ingress rules
+  dynamic "ingress" {
+    for_each = each.value.ingress
+    content {
+      description      = ingress.value.description
+      from_port        = ingress.value.from_port
+      to_port          = ingress.value.to_port
+      protocol         = ingress.value.protocol
+      cidr_blocks      = ingress.value.cidr_blocks
+      security_groups  = lookup(ingress.value, "security_groups", null)
+      self             = lookup(ingress.value, "self", false)
+    }
+  }
+
+  # Egress rules
+  dynamic "egress" {
+    for_each = each.value.egress
+    content {
+      description      = egress.value.description
+      from_port        = egress.value.from_port
+      to_port          = egress.value.to_port
+      protocol         = egress.value.protocol
+      cidr_blocks      = egress.value.cidr_blocks
+      security_groups  = lookup(egress.value, "security_groups", null)
+      self             = lookup(egress.value, "self", false)
+    }
+  }
+}
+
+# Output for created security groups
+output "security_group_ids" {
+  value = aws_security_group.eks
+}
