@@ -1,0 +1,63 @@
+provider "aws" {
+  region = "us-east-1"
+}
+
+# Define your policies in a map for 'for_each' usage
+locals {
+  policies = {
+    eksPolicy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action   = ["eks:DescribeCluster"]
+          Effect   = "Allow"
+          Resource = "*"
+        }
+      ]
+    })
+    ec2Policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action   = ["ec2:DescribeInstances"]
+          Effect   = "Allow"
+          Resource = "*"
+        }
+      ]
+    })
+  }
+}
+
+# Create IAM Policy for each item in local.policies
+resource "aws_iam_policy" "eks_policies" {
+  for_each = local.policies
+
+  name        = "${each.key}-policy"
+  description = "IAM policy for ${each.key}"
+  policy      = each.value
+}
+
+# Create an IAM Role for EKS cluster
+resource "aws_iam_role" "eks_role" {
+  name               = "eks-cluster-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Attach all IAM policies to the role using for_each
+resource "aws_iam_role_policy_attachment" "eks_policy_attachments" {
+  for_each = aws_iam_policy.eks_policies
+
+  role       = aws_iam_role.eks_role.name
+  policy_arn = each.value.arn
+}
