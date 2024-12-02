@@ -1,0 +1,635 @@
+resource "aws_eks_cluster" "this" {
+  for_each = var.clusters
+
+  name                          = "${each.value.cluster_name}-${var.region}-${var.environment}"
+  role_arn                      = try(aws_iam_role.eks_role[each.key].arn, var.iam_role_arn) # Reference IAM Role ARN dynamically or fall back to the provided variable
+  version                       = each.value.version
+  enabled_cluster_log_types     = each.value.enabled_cluster_log_types
+  bootstrap_self_managed_addons = each.value.bootstrap_self_managed_addons
+
+  access_config {
+    authentication_mode                         = var.authentication_mode
+    bootstrap_cluster_creator_admin_permissions = false
+  }
+
+  vpc_config {
+    security_group_ids      = compact(distinct(concat(var.cluster_additional_security_group_ids, [aws_security_group.this.id])))
+    subnet_ids              = var.subnet_ids
+    endpoint_private_access = var.cluster_endpoint_private_access
+    endpoint_public_access  = var.cluster_endpoint_public_access
+    public_access_cidrs     = var.cluster_endpoint_public_access_cidrs
+  }
+
+  dynamic "kubernetes_network_config" {
+    for_each = length(var.outpost_config) > 0 ? [1] : []
+
+    content {
+      ip_family         = var.cluster_ip_family
+      service_ipv4_cidr = var.cluster_service_ipv4_cidr
+    }
+  }
+
+  dynamic "outpost_config" {
+    for_each = length(var.outpost_config) > 0 ? [var.outpost_config] : []
+
+    content {
+      control_plane_instance_type = outpost_config.value.control_plane_instance_type
+      outpost_arns                = outpost_config.value.outpost_arns
+    }
+  }
+
+  dynamic "encryption_config" {
+    for_each = length(var.cluster_encryption_config) > 0 && !length(var.outpost_config) > 0 ? [var.cluster_encryption_config] : []
+
+    content {
+      provider {
+        key_arn = var.create_kms_key ? module.kms.key_arn : encryption_config.value.provider_key_arn
+      }
+      resources = encryption_config.value.resources
+    }
+  }
+
+  dynamic "upgrade_policy" {
+    for_each = length(var.cluster_upgrade_policy) > 0 ? [var.cluster_upgrade_policy] : []
+
+    content {
+      support_type = try(upgrade_policy.value.support_type, null)
+    }
+  }
+
+  dynamic "zonal_shift_config" {
+    for_each = length(var.cluster_zonal_shift_config) > 0 ? [var.cluster_zonal_shift_config] : []
+
+    content {
+      enabled = try(zonal_shift_config.value.enabled, null)
+    }
+  }
+
+  tags = merge(
+    { terraform-aws-modules = "eks" },
+    var.tags,
+    var.cluster_tags,
+    { "ClusterName" = "${each.value.cluster_name}-${var.region}-${var.environment}" }
+  )
+
+  timeouts {
+    create = try(var.cluster_timeouts.create, null)
+    update = try(var.cluster_timeouts.update, null)
+    delete = try(var.cluster_timeouts.delete, null)
+  }
+}
+
+depends_on = [
+    aws_iam_role_policy_attachment.this,
+    aws_security_group_rule.cluster,
+    aws_security_group_rule.node,
+    aws_cloudwatch_log_group.this,
+    aws_iam_policy.cni_ipv6_policy,
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      access_config[0].bootstrap_cluster_creator_admin_permissions
+    ]
+  }
+}
+
+
+# CloudWatch Log Group for each cluster
+resource "aws_cloudwatch_log_group" "this" {
+  for_each = var.clusters # Loop over the cluster names and configs
+
+  name              = "/aws/eks/${each.key}-${var.region}-${var.environment}/cluster"
+  retention_in_days = var.cloudwatch_log_group_retention_in_days
+  kms_key_id        = var.cloudwatch_log_group_kms_key_id
+  log_group_class   = var.cloudwatch_log_group_class
+
+  tags = merge(
+    var.tags,
+    var.cloudwatch_log_group_tags,
+    { Name = "/aws/eks/${each.key}-${var.region}-${var.environment}/cluster" }
+  )
+}
+
+# EC2 Security Group Tagging for Each Cluster
+resource "aws_ec2_tag" "cluster_primary_security_group" {
+  for_each = var.clusters # Ensure we are tagging the security group for each cluster
+
+  resource_id = aws_eks_cluster.this[each.key].vpc_config[0].security_group_ids[0] # Correct reference to the cluster's security group ID
+  key         = each.key
+  value       = each.value.cluster_name # or another value based on your tagging strategy
+}
+
+
+
+
+############### IAM
+
+# IAM Policy Document for Assume Role
+data "aws_iam_policy_document" "assume_role_policy" {
+  for_each = var.clusters
+
+  statement {
+    sid     = "EKSClusterAssumeRole"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["eks.amazonaws.com"]
+    }
+
+    dynamic "principals" {
+      for_each = var.create_outposts_local_cluster ? [1] : []
+
+      content {
+        type        = "Service"
+        identifiers = [
+          "ec2.amazonaws.com",
+        ]
+      }
+    }
+  }
+}
+
+# IAM Role for each Cluster
+resource "aws_iam_role" "this" {
+  for_each = var.clusters
+
+  name        = var.iam_role_use_name_prefix ? null : "${each.value.cluster_name}-cluster"
+  name_prefix = var.iam_role_use_name_prefix ? "${each.value.cluster_name}-cluster${var.prefix_separator}" : null
+  path        = var.iam_role_path
+  description = var.iam_role_description
+
+  assume_role_policy   = data.aws_iam_policy_document.assume_role_policy[each.key].json
+  permissions_boundary = var.iam_role_permissions_boundary
+  force_detach_policies = true
+
+  tags = merge(var.tags, var.iam_role_tags)
+}
+
+# IAM Role Policy Attachments for each Cluster
+resource "aws_iam_role_policy_attachment" "this" {
+  for_each = {
+    for cluster_key, cluster_value in var.clusters : cluster_key => {
+      AmazonEKSClusterPolicy         = var.create_outposts_local_cluster ? "arn:aws:iam::aws:policy/AmazonEKSLocalOutpostClusterPolicy" : "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+      AmazonEKSVPCResourceController = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController",
+    }
+  }
+
+  policy_arn = each.value.AmazonEKSClusterPolicy
+  role       = aws_iam_role.this[each.key].name
+}
+
+resource "aws_iam_role_policy_attachment" "additional" {
+  for_each = {
+    for cluster_key, cluster_value in var.clusters : cluster_key => {
+      for k, v in cluster_value.iam_role_additional_policies : k => v
+    }
+  }
+
+  policy_arn = each.value
+  role       = aws_iam_role.this[each.key].name
+}
+
+# IAM Role Policy Attachment for Cluster Encryption (only if enabled)
+resource "aws_iam_role_policy_attachment" "cluster_encryption" {
+  for_each = {
+    for cluster_key, cluster_value in var.clusters : cluster_key => {
+      create_iam_role = cluster_value.create_iam_role
+      enable_encryption = cluster_value.enable_cluster_encryption_config
+    }
+  }
+
+  count = each.value.create_iam_role && each.value.enable_encryption ? 1 : 0
+
+  policy_arn = aws_iam_policy.cluster_encryption[each.key].arn
+  role       = aws_iam_role.this[each.key].name
+}
+
+# Cluster Encryption Policy for each Cluster (only if enabled)
+resource "aws_iam_policy" "cluster_encryption" {
+  for_each = var.clusters
+
+  count = each.value.create_iam_role && each.value.enable_cluster_encryption_config ? 1 : 0
+
+  name        = var.cluster_encryption_policy_use_name_prefix ? null : "${each.value.cluster_name}-ClusterEncryption"
+  name_prefix = var.cluster_encryption_policy_use_name_prefix ? "${each.value.cluster_name}-ClusterEncryption" : null
+  description = var.cluster_encryption_policy_description
+  path        = var.cluster_encryption_policy_path
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ListGrants",
+          "kms:DescribeKey",
+        ]
+        Effect   = "Allow"
+        Resource = var.create_kms_key ? module.kms.key_arn : each.value.cluster_encryption_config.provider_key_arn
+      },
+    ]
+  })
+
+  tags = merge(var.tags, var.cluster_encryption_policy_tags)
+}
+
+
+
+
+
+
+
+
+
+
+
+############################################################ var.tf
+
+
+# Variables for cluster configuration
+variable "clusters" {
+  description = "A map of EKS clusters with configuration details"
+  type = map(object({
+    cluster_name                    = string
+    version                         = string
+    enabled_cluster_log_types       = list(string)
+    bootstrap_self_managed_addons   = bool
+    iam_role_additional_policies    = map(string)
+    enable_cluster_encryption_config = bool
+    create_iam_role                 = bool
+    cluster_encryption_config       = object({
+      provider_key_arn = string
+      resources        = list(string)
+    })
+    cluster_tags                    = map(string)
+  }))
+}
+
+variable "region" {
+  description = "AWS region"
+  type        = string
+}
+
+variable "environment" {
+  description = "Deployment environment (e.g., dev, prod)"
+  type        = string
+}
+
+variable "iam_role_arn" {
+  description = "The IAM Role ARN to be used for the EKS cluster"
+  type        = string
+  default     = ""
+}
+
+variable "authentication_mode" {
+  description = "Authentication mode for the EKS cluster"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "The list of subnet IDs for the EKS cluster"
+  type        = list(string)
+}
+
+variable "cluster_additional_security_group_ids" {
+  description = "List of additional security group IDs for the cluster"
+  type        = list(string)
+}
+
+variable "cluster_endpoint_private_access" {
+  description = "Enable or disable private access to the EKS API server endpoint"
+  type        = bool
+}
+
+variable "cluster_endpoint_public_access" {
+  description = "Enable or disable public access to the EKS API server endpoint"
+  type        = bool
+}
+
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "CIDRs allowed for public access to the EKS API server endpoint"
+  type        = list(string)
+}
+
+variable "cluster_ip_family" {
+  description = "IP family for the EKS cluster (IPv4 or DualStack)"
+  type        = string
+}
+
+variable "cluster_service_ipv4_cidr" {
+  description = "Service CIDR block for IPv4 services"
+  type        = string
+}
+
+variable "outpost_config" {
+  description = "Configuration for EKS cluster with outposts"
+  type        = list(object({
+    control_plane_instance_type = string
+    outpost_arns                = list(string)
+  }))
+  default = []
+}
+
+variable "cluster_encryption_config" {
+  description = "Encryption configuration for the EKS cluster"
+  type        = list(object({
+    provider_key_arn = string
+    resources        = list(string)
+  }))
+  default = []
+}
+
+variable "cluster_upgrade_policy" {
+  description = "Upgrade policy for the EKS cluster"
+  type        = list(object({
+    support_type = string
+  }))
+  default = []
+}
+
+variable "cluster_zonal_shift_config" {
+  description = "Zonal shift configuration for the EKS cluster"
+  type        = list(object({
+    enabled = bool
+  }))
+  default = []
+}
+
+variable "tags" {
+  description = "Global tags for all resources"
+  type        = map(string)
+  default     = {}
+}
+
+variable "cloudwatch_log_group_retention_in_days" {
+  description = "Retention period for CloudWatch logs"
+  type        = number
+  default     = 30
+}
+
+variable "cloudwatch_log_group_kms_key_id" {
+  description = "KMS Key ID for CloudWatch Log Group encryption"
+  type        = string
+  default     = ""
+}
+
+variable "cloudwatch_log_group_class" {
+  description = "Class for the CloudWatch Log Group"
+  type        = string
+  default     = "Standard"
+}
+
+variable "iam_role_permissions_boundary" {
+  description = "IAM Role permissions boundary"
+  type        = string
+  default     = ""
+}
+
+variable "iam_role_path" {
+  description = "Path for IAM roles"
+  type        = string
+  default     = "/"
+}
+
+variable "iam_role_description" {
+  description = "Description for IAM roles"
+  type        = string
+  default     = "IAM Role for EKS cluster"
+}
+
+variable "iam_role_use_name_prefix" {
+  description = "Use name prefix for IAM role"
+  type        = bool
+  default     = false
+}
+
+variable "iam_role_tags" {
+  description = "Tags to apply to IAM roles"
+  type        = map(string)
+  default     = {}
+}
+
+variable "create_kms_key" {
+  description = "Flag to indicate whether to create a new KMS key"
+  type        = bool
+  default     = false
+}
+
+variable "prefix_separator" {
+  description = "Separator to use when creating resource names"
+  type        = string
+  default     = "-"
+}
+
+variable "cluster_timeouts" {
+  description = "Timeouts for cluster creation, update, and deletion"
+  type = object({
+    create = string
+    update = string
+    delete = string
+  })
+  default = {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
+}
+
+variable "create_outposts_local_cluster" {
+  description = "Flag to indicate whether to create an outposts local cluster"
+  type        = bool
+  default     = false
+}
+
+
+
+
+
+######################################outpput 
+
+# Output the cluster names
+output "eks_cluster_names" {
+  description = "The names of the created EKS clusters"
+  value       = [for cluster in aws_eks_cluster.this : cluster.name]
+}
+
+# Output the ARN of the IAM roles created for each cluster
+output "eks_cluster_role_arns" {
+  description = "The ARNs of the IAM roles for each EKS cluster"
+  value       = { for k, v in aws_iam_role.this : k => v.arn }
+}
+
+# Output the security group IDs for each cluster's VPC
+output "eks_security_group_ids" {
+  description = "The security group IDs associated with each EKS cluster"
+  value       = { for k, v in aws_eks_cluster.this : k => v.vpc_config[0].security_group_ids }
+}
+
+# Output the CloudWatch log group names
+output "cloudwatch_log_group_names" {
+  description = "The names of the CloudWatch log groups"
+  value       = [for log_group in aws_cloudwatch_log_group.this : log_group.name]
+}
+
+# Output the IAM policies attached to the EKS cluster roles
+output "eks_cluster_role_policy_arns" {
+  description = "The ARNs of the IAM policies attached to the EKS cluster roles"
+  value       = { for k, v in aws_iam_role_policy_attachment.this : k => v.policy_arn }
+}
+
+# Output the KMS key ID used for CloudWatch logs
+output "cloudwatch_log_group_kms_key_id" {
+  description = "The KMS key ID used for CloudWatch log group encryption"
+  value       = var.cloudwatch_log_group_kms_key_id
+}
+
+
+
+
+
+
+
+
+###################################################################################################################################################################################################
+
+
+module "eks" {
+  source     = "./module/eks"  # Path to the `eks` module
+  region     = var.region
+  environment = var.environment
+  clusters   = var.clusters
+  iam_role_arn = var.iam_role_arn
+  subnet_ids = var.subnet_ids
+  authentication_mode = var.authentication_mode
+  create_kms_key = var.create_kms_key
+  tags = var.tags
+  cloudwatch_log_group_retention_in_days = var.cloudwatch_log_group_retention_in_days
+  cloudwatch_log_group_kms_key_id = var.cloudwatch_log_group_kms_key_id
+  cloudwatch_log_group_class = var.cloudwatch_log_group_class
+}
+
+
+
+
+##############
+variable "region" {
+  description = "The AWS region to deploy the clusters."
+  type        = string
+}
+
+variable "environment" {
+  description = "The environment (e.g., dev, prod)."
+  type        = string
+}
+
+variable "clusters" {
+  description = "Clusters configuration map."
+  type        = map(object({
+    cluster_name                       = string
+    version                            = string
+    enabled_cluster_log_types          = list(string)
+    bootstrap_self_managed_addons      = list(string)
+    cluster_ip_family                  = string
+    cluster_service_ipv4_cidr          = string
+    create_iam_role                    = bool
+    enable_cluster_encryption_config   = bool
+    iam_role_additional_policies       = map(string)
+  }))
+}
+
+variable "subnet_ids" {
+  description = "The subnet IDs for the cluster."
+  type        = list(string)
+}
+
+variable "iam_role_arn" {
+  description = "The IAM role ARN for the clusters."
+  type        = string
+  default     = ""
+}
+
+variable "authentication_mode" {
+  description = "Authentication mode for the cluster."
+  type        = string
+}
+
+variable "tags" {
+  description = "Common tags."
+  type        = map(string)
+  default     = {}
+}
+
+variable "create_kms_key" {
+  description = "Create KMS key for encryption."
+  type        = bool
+  default     = false
+}
+
+variable "cloudwatch_log_group_retention_in_days" {
+  description = "Retention period for CloudWatch Log Groups."
+  type        = number
+}
+
+variable "cloudwatch_log_group_kms_key_id" {
+  description = "KMS key ID for CloudWatch Log Groups."
+  type        = string
+  default     = ""
+}
+
+variable "cloudwatch_log_group_class" {
+  description = "Class for CloudWatch Log Groups."
+  type        = string
+  default     = "standard"
+}
+
+
+
+#################
+
+region = "us-west-2"
+environment = "prod"
+
+clusters = {
+  "cluster1" = {
+    cluster_name = "cluster1"
+    version = "1.21"
+    enabled_cluster_log_types = ["api", "audit"]
+    bootstrap_self_managed_addons = []
+    cluster_ip_family = "ipv4"
+    cluster_service_ipv4_cidr = "10.100.0.0/16"
+    create_iam_role = true
+    enable_cluster_encryption_config = true
+    iam_role_additional_policies = {}
+  },
+  "cluster2" = {
+    cluster_name = "cluster2"
+    version = "1.21"
+    enabled_cluster_log_types = ["api", "audit"]
+    bootstrap_self_managed_addons = []
+    cluster_ip_family = "ipv4"
+    cluster_service_ipv4_cidr = "10.200.0.0/16"
+    create_iam_role = true
+    enable_cluster_encryption_config = true
+    iam_role_additional_policies = {}
+  }
+}
+
+subnet_ids = ["subnet-xxxxxx", "subnet-yyyyyy"]
+iam_role_arn = "arn:aws:iam::123456789012:role/eks-role"
+authentication_mode = "RBAC"
+tags = {
+  "Environment" = "Production"
+}
+
+create_kms_key = true
+cloudwatch_log_group_retention_in_days = 14
+cloudwatch_log_group_kms_key_id = "arn:aws:kms:us-west-2:123456789012:key/abcd-efgh"
+cloudwatch_log_group_class = "standard"
+
+
+
+
+################
