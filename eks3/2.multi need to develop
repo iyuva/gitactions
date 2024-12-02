@@ -1,0 +1,316 @@
+# main.tf (Parent module)
+
+provider "aws" {
+  region = var.region
+}
+
+module "eks" {
+  source = "./modules/eks"
+
+  for_each = { for cluster in var.clusters : cluster.cluster_name => cluster }
+
+  cluster_name                     = each.value.cluster_name
+  version                          = each.value.version
+  enabled_cluster_log_types        = each.value.enabled_cluster_log_types
+  bootstrap_self_managed_addons    = each.value.bootstrap_self_managed_addons
+  region                           = var.region
+  environment                      = var.environment
+  iam_role_arn                     = var.iam_role_arn
+  subnet_ids                       = var.subnet_ids
+  cluster_additional_security_group_ids = var.cluster_additional_security_group_ids
+  cluster_endpoint_private_access  = var.cluster_endpoint_private_access
+  cluster_endpoint_public_access   = var.cluster_endpoint_public_access
+  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+  cluster_ip_family                = var.cluster_ip_family
+  cluster_service_ipv4_cidr        = var.cluster_service_ipv4_cidr
+  outpost_config                   = var.outpost_config
+  cluster_encryption_config       = var.cluster_encryption_config
+  create_kms_key                  = var.create_kms_key
+  cluster_upgrade_policy          = var.cluster_upgrade_policy
+  cluster_zonal_shift_config      = var.cluster_zonal_shift_config
+  cloudwatch_log_group_retention_in_days = var.cloudwatch_log_group_retention_in_days
+  cloudwatch_log_group_kms_key_id = var.cloudwatch_log_group_kms_key_id
+  cloudwatch_log_group_class      = var.cloudwatch_log_group_class
+  tags                            = var.tags
+  cluster_tags                    = var.cluster_tags
+  cloudwatch_log_group_tags       = var.cloudwatch_log_group_tags
+  cluster_timeouts                = var.cluster_timeouts
+  create_cluster_primary_security_group_tags = var.create_cluster_primary_security_group_tags
+}
+
+
+
+
+##########################################################
+# modules/eks/eks.tf (Child module)
+
+resource "aws_eks_cluster" "this" {
+  for_each = var.clusters
+
+  name                          = "${each.value.cluster_name}-${var.region}-${var.environment}"
+  role_arn                      = try(aws_iam_role.eks_role[each.key].arn, var.iam_role_arn) # Reference IAM Role ARN dynamically or fall back to the provided variable
+  version                       = each.value.version
+  enabled_cluster_log_types     = each.value.enabled_cluster_log_types
+  bootstrap_self_managed_addons = each.value.bootstrap_self_managed_addons
+
+  access_config {
+    authentication_mode                         = var.authentication_mode
+    bootstrap_cluster_creator_admin_permissions = false
+  }
+
+  vpc_config {
+    security_group_ids      = compact(distinct(concat(var.cluster_additional_security_group_ids, [aws_security_group.this.id])))
+    subnet_ids              = var.subnet_ids
+    endpoint_private_access = var.cluster_endpoint_private_access
+    endpoint_public_access  = var.cluster_endpoint_public_access
+    public_access_cidrs     = var.cluster_endpoint_public_access_cidrs
+  }
+
+  dynamic "kubernetes_network_config" {
+    for_each = length(var.outpost_config) > 0 ? [1] : []
+
+    content {
+      ip_family         = var.cluster_ip_family
+      service_ipv4_cidr = var.cluster_service_ipv4_cidr
+    }
+  }
+
+  dynamic "outpost_config" {
+    for_each = length(var.outpost_config) > 0 ? [var.outpost_config] : []
+
+    content {
+      control_plane_instance_type = outpost_config.value.control_plane_instance_type
+      outpost_arns                = outpost_config.value.outpost_arns
+    }
+  }
+
+  dynamic "encryption_config" {
+    for_each = length(var.cluster_encryption_config) > 0 && !length(var.outpost_config) > 0 ? [var.cluster_encryption_config] : []
+
+    content {
+      provider {
+        key_arn = var.create_kms_key ? module.kms.key_arn : encryption_config.value.provider_key_arn
+      }
+      resources = encryption_config.value.resources
+    }
+  }
+
+  dynamic "upgrade_policy" {
+    for_each = length(var.cluster_upgrade_policy) > 0 ? [var.cluster_upgrade_policy] : []
+
+    content {
+      support_type = try(upgrade_policy.value.support_type, null)
+    }
+  }
+
+  dynamic "zonal_shift_config" {
+    for_each = length(var.cluster_zonal_shift_config) > 0 ? [var.cluster_zonal_shift_config] : []
+
+    content {
+      enabled = try(zonal_shift_config.value.enabled, null)
+    }
+  }
+
+  tags = merge(
+    { terraform-aws-modules = "eks" },
+    var.tags,
+    var.cluster_tags,
+    { "ClusterName" = "${each.value.cluster_name}-${var.region}-${var.environment}" }
+  )
+
+  timeouts {
+    create = try(var.cluster_timeouts.create, null)
+    update = try(var.cluster_timeouts.update, null)
+    delete = try(var.cluster_timeouts.delete, null)
+  }
+}
+
+depends_on = [
+    aws_iam_role_policy_attachment.this,
+    aws_security_group_rule.cluster,
+    aws_security_group_rule.node,
+    aws_cloudwatch_log_group.this,
+    aws_iam_policy.cni_ipv6_policy,
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      access_config[0].bootstrap_cluster_creator_admin_permissions
+    ]
+  }
+}
+
+
+#################################################
+# modules/eks/variables.tf (Child module)
+
+variable "clusters" {
+  description = "Cluster configurations"
+  type        = list(object({
+    cluster_name                    = string
+    version                         = string
+    enabled_cluster_log_types       = list(string)
+    bootstrap_self_managed_addons   = list(string)
+  }))
+}
+
+variable "region" {
+  description = "The AWS region to deploy the cluster"
+  type        = string
+}
+
+variable "environment" {
+  description = "The environment for the cluster"
+  type        = string
+}
+
+variable "iam_role_arn" {
+  description = "IAM role ARN for the cluster"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "Subnet IDs for the EKS cluster"
+  type        = list(string)
+}
+
+variable "cluster_additional_security_group_ids" {
+  description = "Additional security group IDs"
+  type        = list(string)
+}
+
+variable "cluster_endpoint_private_access" {
+  description = "Enable private access for the cluster endpoint"
+  type        = bool
+}
+
+variable "cluster_endpoint_public_access" {
+  description = "Enable public access for the cluster endpoint"
+  type        = bool
+}
+
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "Public access CIDR blocks"
+  type        = list(string)
+}
+
+variable "cluster_ip_family" {
+  description = "IP family for the cluster"
+  type        = string
+}
+
+variable "cluster_service_ipv4_cidr" {
+  description = "IPv4 CIDR for the cluster service"
+  type        = string
+}
+
+variable "outpost_config" {
+  description = "Outpost configuration for the cluster"
+  type        = list(any)
+}
+
+variable "cluster_encryption_config" {
+  description = "Cluster encryption configuration"
+  type        = list(any)
+}
+
+variable "create_kms_key" {
+  description = "Whether to create a new KMS key"
+  type        = bool
+}
+
+variable "cluster_upgrade_policy" {
+  description = "Cluster upgrade policy"
+  type        = list(any)
+}
+
+variable "cluster_zonal_shift_config" {
+  description = "Cluster zonal shift configuration"
+  type        = list(any)
+}
+
+variable "cloudwatch_log_group_retention_in_days" {
+  description = "Retention in days for CloudWatch log groups"
+  type        = number
+}
+
+variable "cloudwatch_log_group_kms_key_id" {
+  description = "KMS key ID for CloudWatch log groups"
+  type        = string
+}
+
+variable "cloudwatch_log_group_class" {
+  description = "Class for CloudWatch log groups"
+  type        = string
+}
+
+variable "tags" {
+  description = "Tags for the resources"
+  type        = map(string)
+}
+
+variable "cluster_tags" {
+  description = "Tags specific to the cluster"
+  type        = map(string)
+}
+
+variable "cloudwatch_log_group_tags" {
+  description = "Tags for CloudWatch log groups"
+  type        = map(string)
+}
+
+variable "cluster_timeouts" {
+  description = "Timeout settings for the cluster"
+  type = object({
+    create = string
+    update = string
+    delete = string
+  })
+}
+
+variable "create_cluster_primary_security_group_tags" {
+  description = "Whether to create tags for the primary security group"
+  type        = bool
+}
+
+
+#################################################### tfvars 
+
+cluster_name = "my-cluster"
+version      = "1.23"
+enabled_cluster_log_types = ["api", "audit"]
+bootstrap_self_managed_addons = ["vpc-cni"]
+
+region = "us-west-2"
+environment = "dev"
+iam_role_arn = "arn:aws:iam::123456789012:role/my-eks-role"
+subnet_ids = ["subnet-abc123", "subnet-def456"]
+cluster_additional_security_group_ids = ["sg-12345678"]
+cluster_endpoint_private_access = true
+cluster_endpoint_public_access = true
+cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+cluster_ip_family = "ipv4"
+cluster_service_ipv4_cidr = "10.100.0.0/16"
+outpost_config = []
+cluster_encryption_config = []
+create_kms_key = false
+cluster_upgrade_policy = []
+cluster_zonal_shift_config = []
+cloudwatch_log_group_retention_in_days = 30
+cloudwatch_log_group_kms_key_id = ""
+cloudwatch_log_group_class = "Standard"
+tags = {
+  "Project" = "MyEKSProject"
+}
+cluster_tags = {
+  "Environment" = "Dev"
+}
+cloudwatch_log_group_tags = {
+  "Environment" = "Dev"
+}
+cluster_timeouts = {
+  create = "30m"
+  update = "30m"
+  delete = "30m"
+}
+create_cluster_primary_security_group_tags = true
