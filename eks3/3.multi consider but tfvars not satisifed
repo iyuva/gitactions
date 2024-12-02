@@ -445,7 +445,41 @@ variable "create_outposts_local_cluster" {
 }
 
 
+#####DEC---
+variable "cluster_encryption_policy_use_name_prefix" {
+  description = "Whether to use a name prefix for the cluster encryption policy."
+  type        = bool
+  default     = false
+}
 
+variable "cluster_encryption_policy_description" {
+  description = "Description for the cluster encryption policy."
+  type        = string
+  default     = "Cluster encryption policy"
+}
+
+variable "cluster_encryption_policy_path" {
+  description = "Path for the cluster encryption policy."
+  type        = string
+  default     = "/"
+}
+
+variable "cloudwatch_log_group_tags" {
+  description = "Tags for CloudWatch Log Group."
+  type        = map(string)
+  default     = {}
+}
+
+
+
+variable "cluster_tags" {
+  description = "Cluster-specific tags."
+  type        = map(string)
+  default     = {}
+}
+
+
+####dec----
 
 
 ######################################outpput 
