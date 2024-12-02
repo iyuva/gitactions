@@ -445,6 +445,12 @@ variable "create_outposts_local_cluster" {
 }
 
 
+variable "cluster_encryption_policy_tags" {
+  description = "Tags for the cluster encryption policy."
+  type        = map(string)
+  default     = {}
+}
+
 #####DEC---
 variable "cluster_encryption_policy_use_name_prefix" {
   description = "Whether to use a name prefix for the cluster encryption policy."
