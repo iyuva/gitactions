@@ -292,3 +292,147 @@ node_group_max_unavailable = 1
 
 
 
+
+##################update code with role 
+# IAM Role for EKS Node Group
+resource "aws_iam_role" "this" {
+  for_each = var.clusters
+
+  name = "${each.value.cluster_name}-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Effect = "Allow",
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Attach Required Policies to the IAM Role
+resource "aws_iam_role_policy_attachment" "eks_worker_node" {
+  for_each = var.clusters
+
+  role       = aws_iam_role.this[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  for_each = var.clusters
+
+  role       = aws_iam_role.this[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSCNIPolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
+  for_each = var.clusters
+
+  role       = aws_iam_role.this[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "this" {
+  for_each = var.clusters
+
+  name     = each.value.cluster_name
+  role_arn = aws_iam_role.this[each.key].arn
+
+  vpc_config {
+    subnet_ids = var.subnet_ids
+  }
+}
+
+# CloudWatch Log Group
+resource "aws_cloudwatch_log_group" "this" {
+  for_each = var.clusters
+
+  name              = "/aws/eks/${each.value.cluster_name}"
+  retention_in_days = 7
+}
+
+# Security Group for Nodes
+resource "aws_security_group" "this" {
+  name        = "eks-node-security-group"
+  description = "Security group for EKS node group"
+  vpc_id      = var.vpc_id
+}
+
+# EKS Node Group
+resource "aws_eks_node_group" "this" {
+  for_each = var.clusters
+
+  cluster_name    = aws_eks_cluster.this[each.key].name
+  node_group_name = "${each.value.cluster_name}-${var.region}-${var.environment}-node-group"
+  node_role       = aws_iam_role.this[each.key].arn
+  subnet_ids      = var.subnet_ids
+
+  # Instance Type Configuration
+  instance_types = each.value.instance_types != null ? each.value.instance_types : [var.node_instance_type]
+
+  scaling_config {
+    desired_size = each.value.node_group_desired_size != null ? each.value.node_group_desired_size : var.node_group_desired_size
+    min_size     = each.value.node_group_min_size != null ? each.value.node_group_min_size : var.node_group_min_size
+    max_size     = each.value.node_group_max_size != null ? each.value.node_group_max_size : var.node_group_max_size
+  }
+
+  disk_size = each.value.node_group_disk_size != null ? each.value.node_group_disk_size : var.node_group_disk_size
+
+  update_config {
+    max_unavailable = var.node_group_max_unavailable
+  }
+
+  remote_access {
+    ec2_ssh_key               = var.ec2_ssh_key
+    source_security_group_ids = compact(distinct(concat(var.node_security_group_ids, [aws_security_group.this.id])))
+  }
+
+  taints = each.value.node_group_taints != null ? each.value.node_group_taints : []
+
+  labels = merge(
+    each.value.node_group_labels != null ? each.value.node_group_labels : {},
+    { "eks-node-group" = "${each.value.cluster_name}-${var.region}-${var.environment}" }
+  )
+
+  instance_types = each.value.use_spot_instances ? [each.value.spot_instance_type] : [var.node_instance_type]
+
+  ami_type = each.value.node_group_ami_type != null ? each.value.node_group_ami_type : "AL2_x86_64"
+
+  tags = merge(
+    { "terraform-aws-modules" = "eks-node-group" },
+    var.tags,
+    var.node_group_tags,
+    { "NodeGroup" = "${each.value.cluster_name}-${var.region}-${var.environment}" }
+  )
+
+  resources {
+    cloudwatch_logs_group = aws_cloudwatch_log_group.this[each.key].name
+  }
+
+  timeouts {
+    create = try(var.node_group_timeouts.create, null)
+    update = try(var.node_group_timeouts.update, null)
+    delete = try(var.node_group_timeouts.delete, null)
+  }
+
+  enable_auto_scaling = each.value.auto_scaling_enabled != null ? each.value.auto_scaling_enabled : true
+}
+
+# Outputs for Debugging
+output "node_role_arn" {
+  value = { for k, v in aws_iam_role.this : k => v.arn }
+}
+
+output "eks_cluster_name" {
+  value = { for k, v in aws_eks_cluster.this : k => v.name }
+}
+
+#######################
+
+
+
