@@ -1,0 +1,29 @@
+region                     = "us-east-1"
+aws_access_key             = "AKIA35X37YJGMYFJO2HZ"
+aws_secret_key             = "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"
+cluster_name               = "my-eks-cluster"
+cluster_version            = "1.31"
+enabled_log_types          = ["api", "audit", "authenticator"]
+bootstrap_addons           = ["vpc-cni", "kube-proxy"]
+subnet_ids                 = ["subnet-027a7ce6f4abd0fca", "subnet-0054a48f6b6f17e31"]
+vpc_id                     = "vpc-022fdfadb55b8edcc"
+security_group_protocol    = "tcp"
+security_group_from_port   = 443
+security_group_to_port     = 443
+security_group_type        = "ingress"
+security_group_description = "Allow EKS control plane ingress"
+security_group_cidr_blocks = ["0.0.0.0/0"]
+ssh_key_name               = "my-key"
+node_group_ami_type        = "AL2_x86_64"
+node_group_desired_size    = 3
+node_group_min_size        = 2
+node_group_max_size        = 5
+node_group_instance_types  = ["t3.medium"]
+default_tags = {
+  "Environment" = "production"
+}
+cluster_timeouts = {
+  create = "30m"
+  update = "30m"
+  delete = "30m"
+}
