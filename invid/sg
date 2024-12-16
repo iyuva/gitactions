@@ -56,3 +56,115 @@ resource "aws_security_group" "db_sg" {
   description = "Database Security Group"
   vpc_id      = var.vpc_id
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###2nd one 
+
+provider "aws" {
+  region = "us-west-2"  # Set your AWS region
+}
+
+# Define the variable for security group rules
+variable "sg_rules" {
+  type = list(object({
+    type        = string   # e.g., tcp, udp, icmp
+    from_port   = number   # From port for the rule
+    to_port     = number   # To port for the rule
+    cidr_blocks = list(string) # List of allowed CIDR blocks
+  }))
+  description = "List of security group rules for EKS"
+}
+
+# Local variable to store security group rules
+locals {
+  sg_rules = var.sg_rules
+}
+
+# Create the Security Group for EKS
+resource "aws_security_group" "eks_sg" {
+  name        = "eks_sg"
+  description = "Security group for EKS"
+  vpc_id      = "vpc-xxxxxxxx"  # Replace with your VPC ID
+
+  # Dynamic block for ingress rules
+  dynamic "ingress" {
+    for_each = local.sg_rules
+    content {
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.type
+      cidr_blocks = ingress.value.cidr_blocks
+    }
+  }
+
+  # Dynamic block for egress rules
+  dynamic "egress" {
+    for_each = local.sg_rules
+    content {
+      from_port   = egress.value.from_port
+      to_port     = egress.value.to_port
+      protocol    = egress.value.type
+      cidr_blocks = egress.value.cidr_blocks
+    }
+  }
+
+  tags = {
+    Name = "eks-sg"
+  }
+}
+
+output "security_group_id" {
+  value = aws_security_group.eks_sg.id
+}
+
+
+##var 
+sg_rules = [
+  {
+    type        = "tcp"
+    from_port   = 80
+    to_port     = 80
+    cidr_blocks = ["0.0.0.0/0"]
+  },
+  {
+    type        = "tcp"
+    from_port   = 443
+    to_port     = 443
+    cidr_blocks = ["0.0.0.0/0"]
+  },
+  {
+    type        = "tcp"
+    from_port   = 22
+    to_port     = 22
+    cidr_blocks = ["192.168.1.0/24"]  # Allow SSH from a specific network
+  },
+  {
+    type        = "tcp"
+    from_port   = 3306
+    to_port     = 3306
+    cidr_blocks = ["10.0.0.0/8"]  # Allow MySQL from a specific VPC
+  },
+  {
+    type        = "icmp"
+    from_port   = -1
+    to_port     = -1
+    cidr_blocks = ["0.0.0.0/0"]  # Allow ICMP (ping) from anywhere
+  }
+]
+
+
+
+########3rd
