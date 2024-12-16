@@ -1,0 +1,106 @@
+provider "aws" {
+  region = "us-west-2"  # Change to your region
+}
+
+# EKS Cluster (Replace this with your existing cluster or create a new one)
+resource "aws_eks_cluster" "this" {
+  name     = "my-cluster"
+  role_arn = "arn:aws:iam::123456789012:role/eks-cluster-role"
+  
+  vpc_config {
+    subnet_ids = ["subnet-12345", "subnet-67890"]  # Adjust your subnet IDs
+  }
+
+  version = "1.31"
+}
+
+# EKS Addon version data source
+data "aws_eks_addon_version" "this" {
+  for_each = var.cluster_addons
+
+  addon_name         = each.key
+  kubernetes_version = "1.31"
+  most_recent        = true
+}
+
+# EKS Addons Resource
+resource "aws_eks_addon" "this" {
+  for_each = var.cluster_addons
+
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = each.key
+
+  addon_version        = data.aws_eks_addon_version.this[each.key].addon_version
+  configuration_values = jsonencode({})  # Specify any configuration as a map (empty for defaults)
+
+  dynamic "pod_identity_association" {
+    for_each = var.pod_identity_associations[each.key] != null ? [var.pod_identity_associations[each.key]] : []
+
+    content {
+      role_arn        = pod_identity_association.value.role_arn
+      service_account = pod_identity_association.value.service_account
+    }
+  }
+
+  preserve = try(each.value.preserve, true)
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  service_account_role_arn    = "arn:aws:iam::123456789012:role/eks-addon-service-account-role"
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
+
+  depends_on = [aws_eks_cluster.this]
+
+  tags = {
+    Name = each.key
+  }
+}
+
+
+
+
+########## var
+
+variable "cluster_addons" {
+  description = "Map of the EKS Addons to create"
+  type        = map(any)
+  default = {
+    coredns                = {}
+    eks-pod-identity-agent = {}
+    kube-proxy             = {}
+    vpc-cni                = {}
+  }
+}
+
+variable "pod_identity_associations" {
+  description = "Map of pod identity associations (Optional)"
+  type        = map(object({
+    role_arn        = string
+    service_account = string
+  }))
+  default = {}
+}
+
+
+
+### tfvars 
+
+cluster_addons = {
+  coredns                = {}
+  eks-pod-identity-agent = {}
+  kube-proxy             = {}
+  vpc-cni                = {}
+}
+
+pod_identity_associations = {
+  "eks-pod-identity-agent" = {
+    role_arn        = "arn:aws:iam::123456789012:role/pod-identity-role"
+    service_account = "eks-pod-identity-sa"
+  }
+}
+
+
