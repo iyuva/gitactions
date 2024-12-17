@@ -1,0 +1,127 @@
+# Define variables for EKS Access Entries and Policies
+variable "eks_access_entries" {
+  type = map(object({
+    cluster_name      = string
+    kubernetes_groups = list(string)
+    principal_arn     = string
+    type              = string
+    user_name         = string
+    tags              = map(string)
+  }))
+  
+  default = {
+    "entry1" = {
+      cluster_name      = "my-eks-cluster"
+      kubernetes_groups = ["system:masters", "system:node-proxied"]
+      principal_arn     = "arn:aws:iam::123456789012:role/MyClusterAccessRole"
+      type              = "STANDARD"
+      user_name         = "example-user"
+      tags = {
+        "Environment" = "Production"
+        "Team"        = "DevOps"
+      }
+    }
+    # You can add more entries here if needed
+  }
+}
+
+variable "eks_access_policies" {
+  type = map(object({
+    cluster_name  = string
+    policy_arns   = list(string)
+    principal_arn = string
+    access_scope  = object({
+      namespaces = list(string)
+      type       = string
+    })
+  }))
+  
+  default = {
+    "policy1" = {
+      cluster_name  = "my-eks-cluster"
+      policy_arns   = [
+        "arn:aws:iam::aws:policy/AmazonEKSClusterAdminPolicy",
+        "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+      ]
+      principal_arn = "arn:aws:iam::123456789012:role/MyClusterAccessRole"
+      access_scope  = {
+        namespaces = ["default", "kube-system"]
+        type       = "cluster"
+      }
+    }
+    # You can add more policies here if needed
+  }
+}
+
+# Define EKS Access Entries with for_each
+resource "aws_eks_access_entry" "example" {
+  for_each          = var.eks_access_entries
+  cluster_name      = each.value.cluster_name
+  kubernetes_groups = each.value.kubernetes_groups
+  principal_arn     = each.value.principal_arn
+  type              = each.value.type
+  user_name         = each.value.user_name
+  tags              = each.value.tags
+}
+
+# Define EKS Access Policy Associations with multiple policies
+resource "aws_eks_access_policy_association" "example" {
+  for_each = var.eks_access_policies
+  
+  cluster_name  = each.value.cluster_name
+  principal_arn = each.value.principal_arn
+
+  # Loop through each policy ARN in the list and create a policy association for each
+  dynamic "policy" {
+    for_each = each.value.policy_arns
+    content {
+      policy_arn = policy.value
+
+      access_scope {
+        namespaces = each.value.access_scope.namespaces
+        type       = each.value.access_scope.type
+      }
+    }
+  }
+
+  depends_on = [
+    aws_eks_access_entry.example,
+  ]
+}
+
+
+
+
+####tfvars
+# EKS Access Entries
+eks_access_entries = {
+  "entry1" = {
+    cluster_name      = "my-eks-cluster"
+    kubernetes_groups = ["system:masters", "system:node-proxied"]
+    principal_arn     = "arn:aws:iam::123456789012:role/MyClusterAccessRole"
+    type              = "STANDARD"
+    user_name         = "example-user"
+    tags = {
+      "Environment" = "Production"
+      "Team"        = "DevOps"
+    }
+  }
+  # You can add more entries here if needed
+}
+
+# EKS Access Policy Associations with Multiple Policies
+eks_access_policies = {
+  "policy1" = {
+    cluster_name  = "my-eks-cluster"
+    policy_arns   = [
+      "arn:aws:iam::aws:policy/AmazonEKSClusterAdminPolicy",
+      "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+    ]
+    principal_arn = "arn:aws:iam::123456789012:role/MyClusterAccessRole"
+    access_scope  = {
+      namespaces = ["default", "kube-system"]
+      type       = "cluster"
+    }
+  }
+  # You can add more policies here if needed
+}
