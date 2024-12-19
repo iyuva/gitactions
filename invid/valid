@@ -24,3 +24,13 @@ variable "cluster_version" {
     error_message = "Cluster version must be in the format <major>.<minor> (e.g., '1.27')."
   }
 }
+
+#timeout 
+validation {
+    condition = alltrue([
+      for key, value in var.timeout : 
+        (key == "create" || key == "update" || key == "delete") &&
+        can(regex("^\\d+[smhdwMy]?$", value))
+    ])
+    error_message = "Each timeout value must be in a valid duration format (e.g., '30m', '1h', '2d') for create, update, and delete keys."
+  }
