@@ -1,0 +1,142 @@
+provider "aws" {
+  region = "us-west-2"
+}
+
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = module.eks.cluster_certificate_authority_data
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+# Fetch all IAM roles in the AWS account
+data "aws_iam_roles" "all_roles" {}
+
+# Fetch all IAM users in the AWS account
+data "aws_iam_users" "all_users" {}
+
+# Get the current AWS account ID
+data "aws_caller_identity" "current" {}
+
+locals {
+  # Format IAM roles and users for aws-auth ConfigMap
+  aws_auth_roles = [
+    for role in data.aws_iam_roles.all_roles.roles : {
+      rolearn  = role.arn
+      username = role.name
+      groups   = ["system:masters"]
+    }
+  ]
+
+  aws_auth_users = [
+    for user in data.aws_iam_users.all_users.users : {
+      userarn  = user.arn
+      username = user.name
+      groups   = ["system:masters"]
+    }
+  ]
+
+  aws_auth_accounts = [data.aws_caller_identity.current.account_id]
+}
+
+resource "kubernetes_config_map_v1" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles    = yamlencode(local.aws_auth_roles)
+    mapUsers    = yamlencode(local.aws_auth_users)
+    mapAccounts = yamlencode(local.aws_auth_accounts)
+  }
+
+  depends_on = [
+    module.eks,
+  ]
+}
+
+output "aws_auth_configmap" {
+  value = kubernetes_config_map_v1.aws_auth
+}
+
+
+
+
+# Define the AWS provider
+provider "aws" {
+  region = "us-west-2"
+}
+
+# Define the EKS cluster module
+module "eks" {
+  source          = "terraform-aws-modules/eks/aws"
+  cluster_name    = "my-production-cluster"
+  cluster_version = "1.21"
+  subnets         = ["subnet-0a1b2c3d", "subnet-1a2b3c4d"]  # Replace with your actual subnet IDs
+  vpc_id          = "vpc-123abcde"  # Replace with your actual VPC ID
+
+  node_groups = {
+    eks_nodes = {
+      desired_capacity = 3
+      max_capacity     = 5
+      min_capacity     = 2
+      instance_type    = "t3.medium"
+    }
+  }
+}
+
+# Fetch all IAM roles in the AWS account
+data "aws_iam_roles" "all_roles" {}
+
+# Fetch all IAM users in the AWS account
+data "aws_iam_users" "all_users" {}
+
+# Get the current AWS account ID
+data "aws_caller_identity" "current" {}
+
+# Local variables to format IAM roles and users for aws-auth ConfigMap
+locals {
+  # Map IAM roles into the required format for the aws-auth ConfigMap
+  aws_auth_roles = [
+    for role in data.aws_iam_roles.all_roles.roles : {
+      rolearn  = role.arn
+      username = role.name
+      groups   = ["system:masters"]
+    }
+  ]
+
+  # Map IAM users into the required format for the aws-auth ConfigMap
+  aws_auth_users = [
+    for user in data.aws_iam_users.all_users.users : {
+      userarn  = user.arn
+      username = user.name
+      groups   = ["system:masters"]
+    }
+  ]
+
+  # Get the AWS account ID
+  aws_auth_accounts = [data.aws_caller_identity.current.account_id]
+}
+
+# Create the aws-auth ConfigMap in the kube-system namespace
+resource "kubernetes_config_map_v1" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles    = yamlencode(local.aws_auth_roles)
+    mapUsers    = yamlencode(local.aws_auth_users)
+    mapAccounts = yamlencode(local.aws_auth_accounts)
+  }
+
+  depends_on = [
+    module.eks,
+  ]
+}
+
+# Output the aws-auth ConfigMap details
+output "aws_auth_configmap" {
+  value = kubernetes_config_map_v1.aws_auth
+}
