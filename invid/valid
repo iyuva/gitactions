@@ -65,18 +65,22 @@ variable "vpc_config" {
 ## eks log type 
 variable "eks_log_types" {
   description = "EKS log types to enable for the cluster (e.g., 'api', 'audit', 'authenticator', 'controllerManager', 'scheduler')"
-  type        = string
-  default     = "api"
+  type        = set(string)  # Use set to allow unique values
+  default     = ["api"]  # Default log type can be a single value or list
 
   validation {
-    condition = var.eks_log_types == "api" || 
-               var.eks_log_types == "audit" || 
-               var.eks_log_types == "authenticator" || 
-               var.eks_log_types == "controllerManager" || 
-               var.eks_log_types == "scheduler"
-    error_message = "eks_log_types must be one of 'api', 'audit', 'authenticator', 'controllerManager', or 'scheduler'."
+    condition = alltrue([
+      for log_type in var.eks_log_types : 
+        log_type == "api" || 
+        log_type == "audit" || 
+        log_type == "authenticator" || 
+        log_type == "controllerManager" || 
+        log_type == "scheduler"
+    ])
+    error_message = "eks_log_types must be a list/set of valid values: 'api', 'audit', 'authenticator', 'controllerManager', or 'scheduler'."
   }
 }
+
 
 ### bootsrap addons 
 variable "bootstrap_addons" {
