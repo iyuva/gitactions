@@ -62,3 +62,31 @@ variable "vpc_config" {
   }
 }
 
+## eks log type 
+variable "eks_log_types" {
+  description = "EKS log types to enable for the cluster (e.g., 'api', 'audit', 'authenticator', 'controllerManager', 'scheduler')"
+  type        = string
+  default     = "api"
+
+  validation {
+    condition = var.eks_log_types == "api" || 
+               var.eks_log_types == "audit" || 
+               var.eks_log_types == "authenticator" || 
+               var.eks_log_types == "controllerManager" || 
+               var.eks_log_types == "scheduler"
+    error_message = "eks_log_types must be one of 'api', 'audit', 'authenticator', 'controllerManager', or 'scheduler'."
+  }
+}
+
+### bootsrap addons 
+variable "bootstrap_addons" {
+  description = "Whether to enable bootstrap addons for the EKS cluster"
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.bootstrap_addons == true || var.bootstrap_addons == false
+    error_message = "bootstrap_addons must be a boolean value (true or false)."
+  }
+}
+
