@@ -34,3 +34,28 @@ validation {
     ])
     error_message = "Each timeout value must be in a valid duration format (e.g., '30m', '1h', '2d') for create, update, and delete keys."
   }
+
+
+##vpc config 
+variable "vpc_config" {
+  description = "Configuration for VPC, including endpoint settings and subnet set"
+  type = object({
+    endpoint_private = bool
+    endpoint_public  = bool
+    subnet_set       = set(string)
+  })
+  default = {
+    endpoint_private = true
+    endpoint_public  = false
+    subnet_set       = []
+  }
+
+  validation {
+    condition = (
+      can(list(var.vpc_config.subnet_set)) && 
+      alltrue([for subnet in var.vpc_config.subnet_set : can(regex("^subnet-[0-9a-f]+$", subnet))])
+    )
+    error_message = "subnet_set must be a list of valid subnet IDs (e.g., 'subnet-12345678')."
+  }
+}
+
