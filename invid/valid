@@ -1,0 +1,15 @@
+
+
+  validation {
+    condition = alltrue([
+      for config in var.access_config : 
+      (
+        config.authentication_mode == "CONFIG_MAP" || 
+        config.authentication_mode == "API" || 
+        config.authentication_mode == "API_AND_CONFIG_MAP"
+      ) &&
+      (config.bootstrap_cluster_admin_permission == true || config.bootstrap_cluster_admin_permission == false)
+    ])
+    error_message = "authentication_mode must be 'CONFIG_MAP', 'API', or 'API_AND_CONFIG_MAP', and bootstrap_cluster_admin_permission must be true or false."
+  }
+
