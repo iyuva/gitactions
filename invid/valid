@@ -94,3 +94,99 @@ variable "bootstrap_addons" {
   }
 }
 
+
+wks sg ###############
+variable "aks_sg_name" {
+  description = "The name of the security group for EKS Control Plane"
+  type        = string
+
+  validation {
+    condition     = length(var.aks_sg_name) > 0
+    error_message = "The aks_sg_name variable must not be empty."
+  }
+}
+
+variable "vpc_id" {
+  description = "VPC ID where the EKS cluster will be deployed"
+  type        = string
+
+  validation {
+    condition     = can(regex("^vpc-[a-zA-Z0-9]+$", var.vpc_id))
+    error_message = "The vpc_id variable must be a valid VPC ID (e.g., vpc-12345678)."
+  }
+}
+
+variable "eks_sg_ingress" {
+  description = "The eks sg ingress parameters."
+  type = list(object({
+    description = string
+    from_port   = number
+    to_port     = number
+    protocol    = string
+    cidr_blocks = list(string)
+  }))
+
+  validation {
+    condition     = length(var.eks_sg_ingress) > 0
+    error_message = "The eks_sg_ingress variable must contain at least one ingress rule."
+  }
+}
+
+variable "eks_sg_egress" {
+  description = "The eks sg egress parameters."
+  type = list(object({
+    description = string
+    from_port   = number
+    to_port     = number
+    protocol    = string
+    cidr_blocks = list(string)
+  }))
+
+  validation {
+    condition     = length(var.eks_sg_egress) > 0
+    error_message = "The eks_sg_egress variable must contain at least one egress rule."
+  }
+}
+
+variable "cluster_addons" {
+  description = "Map of the EKS Addons to create"
+  type        = map(any)
+
+  validation {
+    condition     = length(var.cluster_addons) > 0
+    error_message = "The cluster_addons variable must not be empty."
+  }
+}
+
+variable "eks_access_entities" {
+  description = "List of EKS access entities."
+  type = map(object({
+    kubernetes_groups = list(string)
+    principal_arn     = string
+    type              = string
+    tags              = map(string)
+  }))
+
+  validation {
+    condition     = length(var.eks_access_entities) > 0
+    error_message = "The eks_access_entities variable must contain at least one entity."
+  }
+}
+
+variable "eks_access_policies" {
+  description = "Map of EKS access policies"
+  type = map(object({
+    name = string
+    policy = object({
+      actions   = list(string)
+      resources = list(string)
+    })
+    type = string
+  }))
+
+  validation {
+    condition     = length(var.eks_access_policies) > 0
+    error_message = "The eks_access_policies variable must contain at least one policy."
+  }
+}
+
