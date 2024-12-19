@@ -13,3 +13,14 @@
     error_message = "authentication_mode must be 'CONFIG_MAP', 'API', or 'API_AND_CONFIG_MAP', and bootstrap_cluster_admin_permission must be true or false."
   }
 
+#version 
+variable "cluster_version" {
+  description = "Kubernetes <major>.<minor> version to use for the EKS cluster (i.e.: 1.27)"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = can(regex("^\\d+\\.\\d+$", var.cluster_version)) && (var.cluster_version != "")
+    error_message = "Cluster version must be in the format <major>.<minor> (e.g., '1.27')."
+  }
+}
