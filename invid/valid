@@ -51,11 +51,14 @@ variable "vpc_config" {
   }
 
   validation {
+    # Ensure the endpoint_private and endpoint_public are booleans
     condition = (
-      can(list(var.vpc_config.subnet_set)) && 
+      (var.vpc_config.endpoint_private == true || var.vpc_config.endpoint_private == false) &&
+      (var.vpc_config.endpoint_public == true || var.vpc_config.endpoint_public == false) &&
+      can(list(var.vpc_config.subnet_set)) &&
       alltrue([for subnet in var.vpc_config.subnet_set : can(regex("^subnet-[0-9a-f]+$", subnet))])
     )
-    error_message = "subnet_set must be a list of valid subnet IDs (e.g., 'subnet-12345678')."
+    error_message = "endpoint_private and endpoint_public must be boolean values, and subnet_set must contain valid subnet IDs (e.g., 'subnet-12345678')."
   }
 }
 
