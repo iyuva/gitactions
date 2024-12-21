@@ -1,0 +1,93 @@
+provider "aws" {
+  region = "us-west-2" # Change to your region
+}
+
+# Define the VPC ID (replace with your actual VPC ID)
+variable "vpc_id" {
+  description = "VPC ID where EKS is deployed"
+  type        = string
+  default     = "vpc-xxxxxx" # Replace with your actual VPC ID
+}
+
+# Define local variables for security group rules
+locals {
+  # EKS Security Group Rule Requirements based on AWS docs:
+  sgrules = [
+    # Rule 1: Control plane to worker nodes communication (ingress)
+    {
+      type        = "ingress"
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]  # Control plane allows traffic from anywhere
+    },
+    # Rule 2: Worker nodes to control plane communication (egress)
+    {
+      type        = "egress"
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]  # Worker nodes can reach control plane over HTTPS
+    },
+    # Rule 3: Worker node to worker node communication (ingress)
+    {
+      type        = "ingress"
+      from_port   = 0
+      to_port     = 65535
+      protocol    = "tcp"
+      cidr_blocks = ["10.0.0.0/16"]  # Replace with your VPC CIDR range for node-to-node communication
+    },
+    # Rule 4: Allow NodePort communication (e.g., port range for NodePort services)
+    {
+      type        = "ingress"
+      from_port   = 30000
+      to_port     = 32767
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]  # Allow NodePort access from anywhere (be cautious with open access)
+    },
+    # Rule 5: Allow internet access (egress)
+    {
+      type        = "egress"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"  # Allow all outbound traffic (for internet access)
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+# Create an EKS Security Group
+resource "aws_security_group" "eks_sg" {
+  name        = "eks-cluster-sg"
+  description = "Security group for EKS cluster"
+  vpc_id      = var.vpc_id
+
+  # Ingress rules: Allow communication from control plane to worker nodes
+  dynamic "ingress" {
+    for_each = { for r in local.sgrules : "${r.type}-${r.from_port}-${r.protocol}" => r if r.type == "ingress" }
+    content {
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
+  }
+
+  # Egress rules: Allow communication from worker nodes to control plane
+  dynamic "egress" {
+    for_each = { for r in local.sgrules : "${r.type}-${r.from_port}-${r.protocol}" => r if r.type == "egress" }
+    content {
+      from_port   = egress.value.from_port
+      to_port     = egress.value.to_port
+      protocol    = egress.value.protocol
+      cidr_blocks = egress.value.cidr_blocks
+    }
+  }
+
+  # Optionally, you can add more rules for management, logging, etc.
+}
+
+# Output the Security Group ID
+output "eks_security_group_id" {
+  value = aws_security_group.eks_sg.id
+}
