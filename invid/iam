@@ -1,0 +1,293 @@
+# BASE normal iam template 
+
+# Provider Configuration
+provider "aws" {
+  region = "us-west-2"
+}
+
+# IAM Role for EKS Cluster Control Plane
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# EKS Cluster Policy with Resource-Specific Permissions
+resource "aws_iam_policy" "eks_cluster_policy" {
+  name        = "eks-cluster-policy"
+  description = "EKS Cluster Role Policy with required permissions"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow specific EC2 actions for the control plane
+      {
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeVpcs",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DescribeInstanceTypes",
+          "ec2:DescribeImages",
+          "ec2:DescribeAvailabilityZones"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:ec2:us-west-2:123456789012:instance/*",
+          "arn:aws:ec2:us-west-2:123456789012:security-group/*",
+          "arn:aws:ec2:us-west-2:123456789012:subnet/*",
+          "arn:aws:ec2:us-west-2:123456789012:vpc/*"
+        ]
+      },
+      # Allow specific ELB actions for the control plane
+      {
+        Action = [
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DescribeTargetGroups"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:elasticloadbalancing:us-west-2:123456789012:loadbalancer/app/*",
+          "arn:aws:elasticloadbalancing:us-west-2:123456789012:targetgroup/*"
+        ]
+      },
+      # Allow specific IAM actions to manage EKS roles
+      {
+        Action = [
+          "iam:ListRolePolicies",
+          "iam:GetRole",
+          "iam:ListAttachedRolePolicies",
+          "iam:GetRolePolicy",
+          "iam:ListPolicies",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:ListPolicyVersions"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:iam::123456789012:role/eks-cluster-role",
+          "arn:aws:iam::123456789012:policy/eks-cluster-policy"
+        ]
+      },
+      # Allow CloudWatch Logs actions for EKS control plane logs
+      {
+        Action = [
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
+          "logs:PutLogEvents",
+          "logs:CreateLogStream"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:logs:us-west-2:123456789012:log-group:/aws/eks/*",
+          "arn:aws:logs:us-west-2:123456789012:log-group:/aws/eks/*:log-stream:*"
+        ]
+      },
+      # Allow specific Auto Scaling actions
+      {
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeAutoScalingInstances"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:autoscaling:us-west-2:123456789012:autoScalingGroup:*:autoScalingGroupName/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach EKS Cluster Policy to the Role
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy_attachment" {
+  role       = aws_iam_role.eks_cluster_role.name
+  policy_arn = aws_iam_policy.eks_cluster_policy.arn
+}
+
+# Secrets Manager Policy with Specific Resource Permissions
+resource "aws_iam_policy" "eks_secrets_manager_policy" {
+  name        = "eks-secrets-manager-policy"
+  description = "Policy to access specific Secrets in Secrets Manager"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow specific Secrets access
+      {
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:secretsmanager:us-west-2:123456789012:secret:MySecret1-*",
+          "arn:aws:secretsmanager:us-west-2:123456789012:secret:MySecret2-*"
+        ]
+      },
+      # Deny access to other Secrets (only deny access to resources outside the list of allowed ARNs)
+      {
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Effect = "Deny"
+        Resource = [
+          "arn:aws:secretsmanager:us-west-2:123456789012:secret:MySecret3-*",
+          "arn:aws:secretsmanager:us-west-2:123456789012:secret:MySecret4-*"
+        ]
+      }
+    ]
+  })
+}
+
+# S3 Access Policy with Resource-Specific Permissions
+resource "aws_iam_policy" "eks_s3_policy" {
+  name        = "eks-s3-policy"
+  description = "Policy to access specific S3 buckets"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow access to specific S3 buckets
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:s3:::my-eks-bucket/*",
+          "arn:aws:s3:::my-eks-bucket"
+        ]
+      },
+      # Deny access to any other S3 buckets (excluding `my-eks-bucket`)
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Effect = "Deny"
+        Resource = [
+          "arn:aws:s3:::other-bucket/*",
+          "arn:aws:s3:::another-bucket/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Cert Manager Policy with Resource-Specific Permissions
+resource "aws_iam_policy" "eks_cert_manager_policy" {
+  name        = "eks-cert-manager-policy"
+  description = "Policy to access ACM for Cert Manager"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow Cert Manager to request, describe, and list certificates
+      {
+        Action = [
+          "acm:RequestCertificate",
+          "acm:DescribeCertificate",
+          "acm:ListCertificates",
+          "acm:GetCertificate"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:acm:us-west-2:123456789012:certificate/certificate-id-1",
+          "arn:aws:acm:us-west-2:123456789012:certificate/certificate-id-2"
+        ]
+      },
+      # Deny access to all other ACM certificates
+      {
+        Action = [
+          "acm:RequestCertificate",
+          "acm:DescribeCertificate",
+          "acm:ListCertificates",
+          "acm:GetCertificate"
+        ]
+        Effect = "Deny"
+        Resource = [
+          "arn:aws:acm:us-west-2:123456789012:certificate/certificate-id-3",
+          "arn:aws:acm:us-west-2:123456789012:certificate/certificate-id-4"
+        ]
+      }
+    ]
+  })
+}
+
+# Optional: JFrog Artifactory Access Policy with Specific Resource Permissions
+resource "aws_iam_policy" "eks_artifactory_policy" {
+  name        = "eks-artifactory-policy"
+  description = "Policy to access JFrog Artifactory"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Allow access to JFrog Artifactory S3 storage
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:s3:::artifactory/*"
+        ]
+      },
+      # Deny access to other S3 buckets
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Effect = "Deny"
+        Resource = [
+          "arn:aws:s3:::other-artifactory-bucket/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach the policies to the EKS cluster role using for_each for scalability
+resource "aws_iam_role_policy_attachment" "eks_role_policy_attachments" {
+  for_each = toset([
+    aws_iam_policy.eks_cluster_policy.arn,
+    aws_iam_policy.eks_secrets_manager_policy.arn,
+    aws_iam_policy.eks_s3_policy.arn,
+    aws_iam_policy.eks_cert_manager_policy.arn,
+    aws_iam_policy.eks_artifactory_policy.arn
+  ])
+
+  role       = aws_iam_role.eks_cluster_role.name
+  policy_arn = each.value
+}
+
+# Outputs
+output "eks_cluster_role_arn" {
+  value = aws_iam_role.eks_cluster_role.arn
+}
+
+output "eks_cluster_role_name" {
+  value = aws_iam_role.eks_cluster_role.name
+}
+
+
+
+
+
+############
+
+
