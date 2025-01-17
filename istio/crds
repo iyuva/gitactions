@@ -1,0 +1,156 @@
+# istio-crds-1.24.2.yaml
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: sidecar-injector.istio-system
+webhooks:
+  - name: sidecar-injector.istio.io
+    clientConfig:
+      service:
+        name: istio-sidecar-injector
+        namespace: istio-system
+        path: "/inject"
+      caBundle: Cg==
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments"]
+        scope: Namespaced
+    admissionReviewVersions: ["v1"]
+    sideEffects: Unknown
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validation.istio-system
+webhooks:
+  - name: validation.istio.io
+    clientConfig:
+      service:
+        name: istiod
+        namespace: istio-system
+        path: "/validate"
+      caBundle: Cg==
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["networking.istio.io"]
+        apiVersions: ["v1alpha3"]
+        resources: ["virtualservices", "gateways", "destinationrules", "peerauthentications", "authorizationpolicies", "envoyfilters"]
+        scope: Namespaced
+    admissionReviewVersions: ["v1"]
+    sideEffects: Unknown
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: authorizationpolicies.authentication.istio.io
+spec:
+  group: authentication.istio.io
+  names:
+    kind: AuthorizationPolicy
+    listKind: AuthorizationPolicyList
+    plural: authorizationpolicies
+    singular: authorizationpolicy
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              action:
+                type: string
+                enum:
+                - ALLOW
+                - DENY
+              rules:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    from:
+                      type: array
+                      items:
+                        type: object
+                    to:
+                      type: array
+                      items:
+                        type: object
+                    when:
+                      type: array
+                      items:
+                        type: object
+                    request:
+                      type: object
+                      properties:
+                        headers:
+                          type: object
+                          additionalProperties:
+                            type: string
+                      additionalProperties: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualservices.networking.istio.io
+spec:
+  group: networking.istio.io
+  names:
+    kind: VirtualService
+    listKind: VirtualServiceList
+    plural: virtualservices
+    singular: virtualservice
+  scope: Namespaced
+  versions:
+  - name: v1alpha3
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              hosts:
+                type: array
+                items:
+                  type: string
+              gateways:
+                type: array
+                items:
+                  type: string
+              http:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    route:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          destination:
+                            type: object
+                            properties:
+                              host:
+                                type: string
+                              port:
+                                type: object
+                                properties:
+                                  number:
+                                    type: integer
+                                required:
+                                - number
+                              subset:
+                                type: string
+                        required:
+                        - destination
