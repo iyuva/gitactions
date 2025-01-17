@@ -1,0 +1,97 @@
+# istio-helmreleases-1.24.2.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system  # Create the istio-system namespace
+  # labels:
+  #   istio-injection: enabled  # Optional: Automatically inject Istio sidecars into this namespace
+
+---
+apiVersion: helm.sh/v1
+kind: HelmRelease
+metadata:
+  name: istio-base
+  namespace: istio-system  # Namespace for Istio components
+spec:
+  chart:
+    repository: https://istio-release.storage.googleapis.com/charts
+    name: base
+    version: 1.24.2 
+
+---
+apiVersion: helm.sh/v1
+kind: HelmRelease
+metadata:
+  name: istiod
+  namespace: istio-system  # Namespace for Istio components
+spec:
+  chart:
+    repository: https://istio-release.storage.googleapis.com/charts
+    name: istiod
+    version: 1.24.2  
+  values:
+    global:
+      istioNamespace: istio-system   #testing
+      proxy:
+        autoInject: true  # Enable automatic sidecar injection
+        resources:
+          requests:
+            cpu: 10m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+
+---
+apiVersion: helm.sh/v1
+kind: HelmRelease
+metadata:
+  name: istio-ingress
+  namespace: istio-system  # Namespace for Istio components
+spec:
+  chart:
+    repository: https://istio-release.storage.googleapis.com/charts
+    name: gateway
+    version: 1.24.2  
+  values:
+    global:
+      istioNamespace: istio-system   #testing
+    gateways:
+      istio-ingressgateway:
+        enabled: true
+        label:
+          app: istio-ingressgateway
+        type: LoadBalancer
+        ports:
+          - port: 80
+            name: http
+          - port: 443
+            name: https
+
+---
+apiVersion: helm.sh/v1
+kind: HelmRelease
+metadata:
+  name: istio-egress
+  namespace: istio-system  # Namespace for Istio components
+spec:
+  chart:
+    repository: https://istio-release.storage.googleapis.com/charts
+    name: gateway
+    version: 1.24.2  
+  values:
+    global:
+      istioNamespace: istio-system   #testing
+    gateways:
+      istio-egressgateway:
+        enabled: true
+        label:
+          app: istio-egressgateway
+        type: ClusterIP  # Egress gateway typically uses ClusterIP
+        ports:
+          - port: 80
+            name: http
+          - port: 443
+            name: https
